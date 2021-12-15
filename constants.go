@@ -2,23 +2,29 @@ package blip
 
 // Maximum clock_rate/sample_rate ratio. For a given sample_rate,
 // clock_rate must not be greater than sample_rate*blip_max_ratio.
-const blipMaxRatio = 0x100000
+const MaxRatio = 0x100000
+
+// Maximum number of samples that can be generated from one time frame.
+const MaxFrame = 4000
 
 const (
-	preshift  = 32
-	timebits  = preshift + 20
-	timeunit  = 1 << timebits
-	bufExtra  = 8*2 + 2
-	deltaBits = 15
-	bassShift = 9
-	fracBits  = timebits - preshift
-	deltaUnit = 1 << deltaBits
+	preShift      = 32
+	timeBits      = preShift + 20
+	timeUnit      = 1 << timeBits
+	bassShift     = 9
+	endFrameExtra = 2
+	halfWidth     = 8
+	bufExtra      = halfWidth*2 + endFrameExtra
+	phaseBits     = 5
+	phaseCount    = 1 << 5
+	deltaBits     = 15
+	deltaUnit     = 1 << deltaBits
+	fracBits      = timeBits - preShift
 )
 
 const (
-	phaseBits  = 5
-	phaseCount = 1 << 5
-	halfWidth  = 8
+	maxSample = 32767
+	minSample = -32768
 )
 
 var blStep = [phaseCount + 1][halfWidth]int16{

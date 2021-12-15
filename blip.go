@@ -5,31 +5,25 @@ import (
 	"unsafe"
 )
 
-type fixed_t = uint64
-
-type buf_t = int
+type buf_t = int32
 
 // Sample buffer that resamples to output rate and accumulates samples until they're read out
 type Blip struct {
-	factor     fixed_t
-	offset     fixed_t
-	avail      int
-	size       int
-	integrator int
+	factor     uint64
+	offset     uint64
+	avail      int32
+	size       int32
+	integrator int32
 	buffer     []buf_t
 }
 
-func clamp(n int) int {
-	if n&0xffff != n {
-		n = (n >> 16) ^ 32767
-	}
-	return n
-}
-
+// Creates new buffer that can hold at most sample_count samples. Sets rates
+// so that there are blip_max_ratio clocks per sample. Returns pointer to new
+// buffer, or NULL if insufficient memory.
 func New(size uint) *Blip {
 	m := &Blip{
-		factor: timeunit / blipMaxRatio,
-		size:   int(size),
+		factor: timeUnit / MaxRatio,
+		size:   int32(size),
 		buffer: make([]buf_t, size+bufExtra),
 	}
 	m.Clear()
@@ -37,23 +31,24 @@ func New(size uint) *Blip {
 	return m
 }
 
+// Frees buffer. No effect if NULL is passed.
 func (b *Blip) Delete() {
 	if b != nil {
 		b = nil
 	}
 }
 
+// Sets approximate input clock rate and output sample rate. For every
+// clock_rate input clocks, approximately sample_rate samples are generated.
 func (b *Blip) SetRates(clockRate, sampleRate float64) error {
-	factor := timeunit * sampleRate / clockRate
-	b.factor = fixed_t(factor)
+	factor := timeUnit * sampleRate / clockRate
+	b.factor = uint64(factor)
 
-	/* Fails if clock_rate exceeds maximum, relative to sample_rate */
 	if !(0 <= factor-float64(b.factor) && factor-float64(b.factor) < 1) {
 		return errors.New("clockRate exceeds maximum, relative to sampleRate")
 	}
 
-	/* Avoid requiring math.h. Equivalent to
-	m->factor = (int) ceil( factor ) */
+	/* Avoid requiring math.h. Equivalent to m->factor = (int) ceil( factor ) */
 	if float64(b.factor) < factor {
 		b.factor++
 	}
@@ -79,12 +74,13 @@ func (b *Blip) Clear() {
 	}
 }
 
+// Length of time frame, in clocks, needed to make sample_count additional samples available.
 func (b *Blip) ClocksNeeded(samples uint) int {
-	if b.avail+int(samples) > b.size {
+	if b.avail+int32(samples) > b.size {
 		return 0
 	}
 
-	needed := fixed_t(samples) * timeunit
+	needed := uint64(samples) * timeUnit
 	if needed < b.offset {
 		return 0
 	}
@@ -92,10 +88,15 @@ func (b *Blip) ClocksNeeded(samples uint) int {
 	return int((needed - b.offset + b.factor - 1) / b.factor)
 }
 
+// Makes input clocks before clock_duration available for reading as output
+// samples. Also begins new time frame at clock_duration, so that clock time 0 in
+// the new time frame specifies the same clock as clock_duration in the old time
+// frame specified. Deltas can have been added slightly past clock_duration (up to
+// however many clocks there are in two output samples).
 func (b *Blip) EndFrame(t uint) error {
-	off := fixed_t(t)*b.factor + b.offset
-	b.avail += int(off >> timebits)
-	b.offset = off & (timeunit - 1)
+	off := uint64(t)*b.factor + b.offset
+	b.avail += int32(off >> timeBits)
+	b.offset = off & (timeUnit - 1)
 
 	if b.avail > b.size {
 		return errors.New("buffer size was exceeded")
@@ -103,19 +104,20 @@ func (b *Blip) EndFrame(t uint) error {
 	return nil
 }
 
+// Number of buffered samples available for reading.
 func (b *Blip) SamplesAvail() int {
-	return b.avail
+	return int(b.avail)
 }
 
 func (b *Blip) removeSamples(count int) {
-	remain := b.avail + bufExtra - count
-	b.avail -= count
+	remain := b.avail + int32(bufExtra) - int32(count)
+	b.avail -= int32(count)
 
-	for i := 0; i < remain; i++ {
+	for i := 0; i < int(remain); i++ {
 		b.buffer[i] = b.buffer[count+i]
 	}
 	for i := 0; i < count; i++ {
-		b.buffer[remain+i] = 0
+		b.buffer[remain+int32(i)] = 0
 	}
 }
 
@@ -124,8 +126,8 @@ func (b *Blip) ReadSamples(out unsafe.Pointer, count int, stereo bool) int {
 		return 0
 	}
 
-	if count > b.avail {
-		count = b.avail
+	if int32(count) > b.avail {
+		count = int(b.avail)
 	}
 
 	if count > 0 {
@@ -136,17 +138,17 @@ func (b *Blip) ReadSamples(out unsafe.Pointer, count int, stereo bool) int {
 		sum := b.integrator
 
 		for i := 0; i < count; i++ {
-			sample := sum >> deltaBits
+			s := sum >> deltaBits // Eliminate fraction
 
 			sum += b.buffer[i]
 
-			sample = clamp(sample)
+			s = clamp(s)
 
-			*(*int)(out) = sample
-			out = unsafe.Add(out, step)
+			*(*int16)(out) = int16(s)
+			out = unsafe.Add(out, step*2)
 
-			/* High-pass filter */
-			sum -= sample << (deltaBits - bassShift)
+			// High-pass filter
+			sum -= s << (deltaBits - bassShift)
 		}
 
 		b.integrator = sum
@@ -158,31 +160,48 @@ func (b *Blip) ReadSamples(out unsafe.Pointer, count int, stereo bool) int {
 }
 
 func (b *Blip) AddDelta(time uint, delta int) error {
-	fixed := (time*uint(b.factor) + uint(b.offset)) >> preshift
-	out := b.buffer[b.avail+int(fixed>>fracBits):]
+	fixed := uint32((uint64(time)*b.factor + b.offset) >> preShift)
+	out := b.buffer[b.avail+int32(fixed>>fracBits):]
 
 	phaseShift := fracBits - phaseBits
-	phase := fixed >> phaseShift & (phaseCount - 1)
+	phase := (fixed >> phaseShift) & (phaseCount - 1)
 	in := blStep[phase]
 
-	interp := int(fixed >> (phaseShift - deltaBits) & (deltaUnit - 1))
+	interp := int((fixed >> (phaseShift - deltaBits)) & (deltaUnit - 1))
 	delta2 := (delta * interp) >> deltaBits
 	delta -= delta2
 
-	if b.avail+int(fixed>>fracBits) > b.size+2 {
+	if b.avail+int32(fixed>>fracBits) > b.size+endFrameExtra {
 		return errors.New("buffer size was exceeded")
 	}
 
-	inNext := blStep[phase+1]
+	next := blStep[phase+1]
 	for i := 0; i < 8; i++ {
-		out[i] += int(in[i])*delta + int(inNext[i])*delta2
+		out[i] += int32(int(in[i])*delta + int(next[i])*delta2)
 	}
 
 	in = blStep[phaseCount-phase]
-	inPrev := blStep[phaseCount-phase-1]
+	prev := blStep[phaseCount-phase-1]
 	for i := 0; i < 8; i++ {
-		out[8+i] += int(in[7-i])*delta + int(inPrev[7-i])*delta2
+		out[8+i] += int32(int(in[7-i])*delta + int(prev[7-i])*delta2)
 	}
 
+	return nil
+}
+
+// Same as blip_add_delta(), but uses faster, lower-quality synthesis.
+func (b *Blip) AddDeltaFast(time uint, delta int) error {
+	fixed := uint((uint64(time)*b.factor + b.offset) >> preShift)
+	out := b.buffer[b.avail+int32(fixed>>fracBits):]
+
+	interp := int((fixed >> (fracBits - deltaBits)) & (deltaUnit - 1))
+	delta2 := delta * interp
+
+	if b.avail+int32(fixed>>fracBits) > b.size+endFrameExtra {
+		return errors.New("buffer size was exceeded")
+	}
+
+	out[7] += int32(delta*deltaUnit - delta2)
+	out[8] += int32(delta2)
 	return nil
 }
