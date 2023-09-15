@@ -1,3 +1,3 @@
-module github.com/pokemium/blip-go
+module github.com/akatsuki105/blip-go
 
-go 1.17
+go 1.21

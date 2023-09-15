@@ -1,6 +1,6 @@
 # blip-go
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/pokemium/blip-go.svg)](https://pkg.go.dev/github.com/pokemium/blip-go)
+[![Go Reference](https://pkg.go.dev/badge/github.com/akatsuki105/blip-go.svg)](https://pkg.go.dev/github.com/akatsuki105/blip-go)
 
 Go binding for [blip-buf](https://code.google.com/archive/p/blip-buf).
 
@@ -15,7 +15,7 @@ The explanation of [blip_buf-rs](http://mvdnes.github.io/rust-docs/blip_buf-rs/b
 ## Usage
 
 ```sh
-go get github.com/pokemium/blip-go
+go get github.com/akatsuki105/blip-go
 ```
 
 ## Credits
